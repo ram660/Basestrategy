@@ -28,13 +28,20 @@ def setup_environment():
     """Setup environment variables from Streamlit secrets or .env"""
     try:
         # Try to use Streamlit secrets first (for cloud deployment)
-        if hasattr(st, 'secrets'):
+        if hasattr(st, 'secrets') and st.secrets:
+            st.write("🔧 Loading configuration from Streamlit Cloud secrets...")
             for key in st.secrets:
                 os.environ[key] = str(st.secrets[key])
-    except:
-        # Fallback to .env file (for local development)
-        from dotenv import load_dotenv
-        load_dotenv()
+            st.write("✅ Secrets loaded successfully")
+        else:
+            st.write("🔧 Loading configuration from .env file...")
+            # Fallback to .env file (for local development)
+            from dotenv import load_dotenv
+            load_dotenv()
+            st.write("✅ .env file loaded successfully")
+    except Exception as e:
+        st.error(f"❌ Error loading configuration: {e}")
+        st.write("Please check your Streamlit Cloud secrets or .env file configuration.")
 
 # Setup environment
 setup_environment()
@@ -355,11 +362,31 @@ class StreamlitTradingDashboard:
 def main():
     """Main function"""
     try:
+        st.write("🚀 Initializing RSI-MA Trading Dashboard...")
         dashboard = StreamlitTradingDashboard()
+        st.write("✅ Dashboard initialized successfully")
         dashboard.run()
     except Exception as e:
-        st.error(f"Application Error: {str(e)}")
+        st.error(f"❌ Application Error: {str(e)}")
+        st.write("**Debug Information:**")
+        st.write(f"- Error Type: {type(e).__name__}")
+        st.write(f"- Error Details: {str(e)}")
+        
+        # Check environment variables
+        st.write("**Environment Check:**")
+        required_vars = ['BITGET_API_KEY', 'BITGET_SECRET_KEY', 'BITGET_PASSPHRASE', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']
+        for var in required_vars:
+            value = os.getenv(var)
+            if value:
+                st.write(f"✅ {var}: Configured")
+            else:
+                st.write(f"❌ {var}: Missing")
+        
         logger.error(f"Dashboard error: {e}")
+        
+        # Show traceback for debugging
+        import traceback
+        st.code(traceback.format_exc())
 
 if __name__ == "__main__":
     main()
