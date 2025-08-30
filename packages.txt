@@ -1,0 +1,8 @@
+# System packages required for the trading bot
+# These will be installed automatically on Streamlit Cloud
+
+# For handling certificates and SSL
+ca-certificates
+
+# For timezone data
+tzdata
