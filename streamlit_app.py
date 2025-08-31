@@ -216,7 +216,7 @@ class StreamlitTradingDashboard:
                     st.session_state.trading_enabled = True
                     st.success("Trading enabled! Real trades will be executed.")
                     if telegram_notifier.is_configured():
-                        asyncio.run(telegram_notifier.send_notification("🚀 Trading enabled via dashboard!"))
+                        asyncio.run(telegram_notifier.send_message("🚀 Trading enabled via dashboard!"))
         
         with col2:
             if st.button("🛑 Disable Trading", type="secondary" if not st.session_state.trading_enabled else "primary"):
@@ -225,12 +225,12 @@ class StreamlitTradingDashboard:
                     st.session_state.trading_enabled = False
                     st.warning("Trading disabled. No new trades will be executed.")
                     if telegram_notifier.is_configured():
-                        asyncio.run(telegram_notifier.send_notification("🛑 Trading disabled via dashboard."))
+                        asyncio.run(telegram_notifier.send_message("🛑 Trading disabled via dashboard."))
         
         with col3:
             if st.button("📱 Test Telegram"):
                 if telegram_notifier.is_configured():
-                    asyncio.run(telegram_notifier.send_notification("📊 Dashboard test message - All systems operational!"))
+                    asyncio.run(telegram_notifier.send_message("📊 Dashboard test message - All systems operational!"))
                     st.success("Telegram test message sent!")
                 else:
                     st.error("Telegram not configured. Check .env file.")
