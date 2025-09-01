@@ -26,7 +26,7 @@ _position_poller_thread = None
 _position_poller_lock = threading.Lock()
 
 # Import our core modules
-from rsi_ma_strategy import OptimizedRSIMAStrategy
+from rsi_ma_strategy import EnhancedRSIMAStrategy
 from bitget_futures_trader import BitgetFuturesTrader
 from data_fetcher import get_current_price, get_historical_data
 from telegram_notifier import telegram_notifier
@@ -98,7 +98,7 @@ class StreamlitTradingDashboard:
     """Main Streamlit Trading Dashboard - Cloud Ready for 24/7 Operation"""
     
     def __init__(self):
-        self.strategy = OptimizedRSIMAStrategy()
+        self.strategy = EnhancedRSIMAStrategy()
         self.trader = BitgetFuturesTrader()
         self.symbols = config.get_symbols_config()['trading_symbols']
         self.trading_active = False
@@ -229,10 +229,36 @@ class StreamlitTradingDashboard:
             return 'HOLD'
     
     def render_header(self):
-        """Render main header"""
-        st.markdown('<div class="main-header">📊 RSI-MA Trading Bot Dashboard</div>', unsafe_allow_html=True)
+        """Render enhanced main header with improved features"""
+        st.markdown('<div class="main-header">📊 Enhanced RSI-MA Trading Bot Dashboard</div>', unsafe_allow_html=True)
         
-        # API Status
+        # Enhanced status display
+        st.markdown("### 🔧 **Enhanced Features Active:**")
+        
+        # Feature status indicators
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            paper_mode = self.strategy.paper_trading_mode
+            if paper_mode:
+                st.markdown('<p class="status-green">📝 Paper Trading Mode</p>', unsafe_allow_html=True)
+            else:
+                st.markdown('<p class="status-red">💰 Live Trading Mode</p>', unsafe_allow_html=True)
+        
+        with col2:
+            trend_filter = f"📈 Trend Filter: ADX ≥ {self.strategy.trend_strength_threshold}"
+            st.markdown(f'<p class="status-green">{trend_filter}</p>', unsafe_allow_html=True)
+        
+        with col3:
+            volume_filter = f"📊 Volume Filter: {self.strategy.volume_multiplier_threshold}x"
+            st.markdown(f'<p class="status-green">{volume_filter}</p>', unsafe_allow_html=True)
+        
+        with col4:
+            risk_mgmt = f"⚠️ Max Risk: {self.strategy.max_risk_per_trade*100:.1f}%"
+            st.markdown(f'<p class="status-green">{risk_mgmt}</p>', unsafe_allow_html=True)
+        
+        # API and Account Status
+        st.markdown("---")
         api_status = self.check_api_status()
         
         col1, col2, col3, col4 = st.columns(4)
@@ -254,12 +280,67 @@ class StreamlitTradingDashboard:
         with col4:
             telegram_status = "🟢 Connected" if telegram_notifier.is_configured() else "🔴 Not Connected"
             st.markdown(f"**Telegram:** {telegram_status}")
+        
+        # Enhanced Strategy Parameters
+        st.markdown("---")
+        st.markdown("### 📋 **Enhanced Strategy Parameters:**")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown(f"""
+            **Signal Thresholds:**
+            - RSI Buy: ≤ {self.strategy.rsi_buy_threshold} (Oversold)
+            - RSI Sell: ≥ {self.strategy.rsi_sell_threshold} (Overbought)
+            - MA Period: {self.strategy.ma53_period}
+            """)
+        
+        with col2:
+            st.markdown(f"""
+            **Risk Management:**
+            - Stop Loss: {self.strategy.stop_loss_pct*100:.1f}%
+            - Take Profit: {self.strategy.take_profit_pct*100:.1f}%
+            - Leverage: {config.trading.leverage}x
+            """)
+        
+        with col3:
+            st.markdown(f"""
+            **Market Filters:**
+            - Session Filter: {'✅' if self.strategy.trading_sessions_enabled else '❌'}
+            - Volatility Filter: {'✅' if self.strategy.volatility_filter_enabled else '❌'}
+            - Max Daily Loss: ${config.trading.max_daily_loss_usdt}
+            """)
     
     def render_trading_controls(self):
-        """Render trading control panel"""
-        st.subheader("🎮 Trading Controls")
+        """Render enhanced trading control panel"""
+        st.subheader("🎮 Enhanced Trading Controls")
         
-        # Simplified: single toggle that starts/stops the whole execution
+        # Paper Trading Mode Toggle
+        st.markdown("### 📝 Trading Mode")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            current_paper_mode = self.strategy.paper_trading_mode
+            if st.checkbox("📝 Paper Trading Mode", value=current_paper_mode, 
+                          help="Enable paper trading to test strategies without real money"):
+                if not current_paper_mode:
+                    self.strategy.paper_trading_mode = True
+                    st.success("✅ Switched to Paper Trading Mode - No real trades will be executed!")
+            else:
+                if current_paper_mode:
+                    if st.button("⚠️ Confirm Switch to LIVE TRADING", type="secondary"):
+                        self.strategy.paper_trading_mode = False
+                        st.error("🚨 LIVE TRADING MODE ENABLED - Real money at risk!")
+        
+        with col2:
+            if self.strategy.paper_trading_mode:
+                st.info("📝 **Paper Trading Active** - All trades are simulated")
+            else:
+                st.error("💰 **LIVE TRADING** - Real money at risk!")
+        
+        st.markdown("---")
+        
+        # Main execution controls
         col1, col2 = st.columns([1, 2])
         
         with col1:

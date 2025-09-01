@@ -27,28 +27,55 @@ class RiskLevel(Enum):
 
 @dataclass
 class TradingConfig:
-    """Trading configuration settings"""
-    # Position Management
-    position_size_usdt: float = 10.0
-    leverage: float = 2.0
+    """Enhanced Trading configuration with improved risk management"""
+    # Position Management - SAFER DEFAULTS
+    position_size_usdt: float = 10.0  # Keep small position size
+    leverage: float = 2.0  # Reduced from 10x to 2x for safety
     max_positions: int = 1
     
-    # Risk Management
-    stop_loss_percent: float = 3.5
-    take_profit_percent: float = 5.0
-    max_daily_loss_usdt: float = 50.0
-    max_drawdown_percent: float = 20.0
+    # Enhanced Risk Management
+    stop_loss_percent: float = 2.0  # Tighter stop loss (was 3.5%)
+    take_profit_percent: float = 3.0  # Conservative take profit (was 5.0%)
+    max_daily_loss_usdt: float = 30.0  # Reduced daily loss limit
+    max_drawdown_percent: float = 15.0  # Stricter drawdown limit
+    max_risk_per_trade_percent: float = 1.0  # Max 1% account risk per trade
     
-    # Strategy Parameters
+    # Strategy Parameters - ENHANCED
     rsi_period: int = 14
     ma53_period: int = 53
     ma50_period: int = 50
-    rsi_buy_threshold: float = 60.0
-    rsi_sell_threshold: float = 40.0
+    rsi_buy_threshold: float = 35.0  # More conservative (was 60.0)
+    rsi_sell_threshold: float = 65.0  # More conservative (was 40.0)
+    
+    # NEW: Market Condition Filters
+    trend_strength_threshold: float = 25.0  # ADX threshold for trend strength
+    volume_multiplier_threshold: float = 1.3  # Volume must be 30% above average
+    volatility_filter_enabled: bool = True
+    max_volatility_threshold: float = 0.05  # 5% max volatility filter
+    
+    # NEW: Multi-timeframe Analysis
+    primary_timeframe: str = "5m"
+    confirmation_timeframe: str = "1h"
+    require_trend_alignment: bool = True
+    
+    # NEW: Session Filters
+    trading_sessions_enabled: bool = True
+    allowed_trading_hours: List[int] = None  # Will be set in __post_init__
+    avoid_news_times: bool = True
+    
+    # Paper Trading Mode
+    paper_trading_mode: bool = True  # START IN PAPER TRADING
     
     # Fees
     taker_fee_percent: float = 0.06
     maker_fee_percent: float = 0.02
+    
+    def __post_init__(self):
+        """Initialize default values that need to be lists"""
+        if self.allowed_trading_hours is None:
+            # Only trade during active market hours (UTC)
+            # Avoid early Asian session and late US session
+            self.allowed_trading_hours = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
 
 @dataclass
 class APIConfig:

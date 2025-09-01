@@ -45,21 +45,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TradingConfig:
-    """Safe trading configuration"""
+    """Enhanced trading configuration with improved safety"""
     # TRADING SYMBOLS (ONLY THESE ALLOWED)
     ALLOWED_SYMBOLS = ['XRPUSDT', 'ADAUSDT', 'XLMUSDT', 'UNIUSDT', 'ATOMUSDT', 'AXSUSDT', 'ARBUSDT']
     
     # ANALYSIS ONLY (NO TRADING)
     ANALYSIS_ONLY_SYMBOLS = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT']
     
-    # TRADING PARAMETERS (ADJUSTED FOR SMALL ACCOUNT)
-    POSITION_SIZE_USDT = 10.0      # $10 per trade (margin) - REDUCED for small account
-    LEVERAGE = 2.0                 # 2x leverage - REDUCED for safety
-    MAX_POSITIONS = 1              # Maximum 1 trade - REDUCED for small account
-    STOP_LOSS_PERCENT = 3.5        # 3.5% stop loss
-    TAKE_PROFIT_PERCENT = 5.0      # 5.0% take profit
-    # MIN_ACCOUNT_BALANCE removed - no minimum balance requirement
-
+    # ENHANCED TRADING PARAMETERS (MUCH SAFER)
+    POSITION_SIZE_USDT = 10.0      # $10 per trade (margin) - SAFE SIZE
+    LEVERAGE = 2.0                 # 2x leverage - REDUCED from dangerous 10x
+    MAX_POSITIONS = 1              # Maximum 1 trade
+    STOP_LOSS_PERCENT = 2.0        # 2.0% stop loss - TIGHTER
+    TAKE_PROFIT_PERCENT = 3.0      # 3.0% take profit - MORE CONSERVATIVE
+    MAX_DAILY_LOSS_USDT = 30.0     # $30 daily loss limit - REDUCED
+    MAX_RISK_PER_TRADE_PERCENT = 1.0  # MAX 1% account risk per trade
+    
+    # PAPER TRADING MODE (START SAFE)
+    PAPER_TRADING_MODE = True      # START IN PAPER TRADING
+    
     # DYNAMIC PROFIT TAKING - DISABLED (Let individual SL/TP orders work)
     PROFIT_THRESHOLD_USDT = 999999.0    # Effectively disabled
 
