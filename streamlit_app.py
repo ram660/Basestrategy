@@ -108,7 +108,8 @@ class StreamlitTradingDashboard:
         
         # Initialize session state
         if 'trading_enabled' not in st.session_state:
-            st.session_state.trading_enabled = False
+            # Default to running the bot on start (user requested)
+            st.session_state.trading_enabled = True
         if 'positions' not in st.session_state:
             st.session_state.positions = []
         if 'trade_history' not in st.session_state:
@@ -116,9 +117,10 @@ class StreamlitTradingDashboard:
         if 'last_signal_check' not in st.session_state:
             st.session_state.last_signal_check = datetime.now()
         if 'signal_monitoring_active' not in st.session_state:
-            st.session_state.signal_monitoring_active = False
+            # Start monitoring by default
+            st.session_state.signal_monitoring_active = True
         if 'auto_trading_active' not in st.session_state:
-            st.session_state.auto_trading_active = False
+            st.session_state.auto_trading_active = True
         if 'app_start_time' not in st.session_state:
             st.session_state.app_start_time = datetime.now()
         
@@ -127,6 +129,14 @@ class StreamlitTradingDashboard:
             if not st.session_state.signal_monitoring_active:
                 st.session_state.signal_monitoring_active = True
                 logger.info("🚀 Auto-started signal monitoring for cloud environment")
+        
+        # Ensure background position poller is running when monitoring is active
+        try:
+            if st.session_state.signal_monitoring_active:
+                # start_position_poller is safe to call if already running
+                self.start_position_poller()
+        except Exception:
+            pass
     
     def _detect_cloud_environment(self) -> bool:
         """Detect if running on Streamlit Cloud"""
@@ -249,28 +259,47 @@ class StreamlitTradingDashboard:
         """Render trading control panel"""
         st.subheader("🎮 Trading Controls")
         
-        col1, col2, col3 = st.columns(3)
+        # Simplified: single toggle that starts/stops the whole execution
+        col1, col2 = st.columns([1, 2])
         
         with col1:
-            if st.button("🚀 Enable Trading", type="primary" if not st.session_state.trading_enabled else "secondary"):
-                if not st.session_state.trading_enabled:
-                    self.trader.enable_trading()
-                    st.session_state.trading_enabled = True
-                    st.success("Trading enabled! Real trades will be executed.")
+            if st.session_state.trading_enabled:
+                if st.button("⏸️ Stop Execution", key="stop_execution", type="primary"):
+                    # Stop everything
+                    try:
+                        self.trader.disable_trading()
+                    except Exception:
+                        pass
+                    st.session_state.trading_enabled = False
+                    st.session_state.auto_trading_active = False
+                    st.session_state.signal_monitoring_active = False
+                    # stop poller
+                    try:
+                        self.stop_position_poller()
+                    except Exception:
+                        pass
+                    st.warning("Execution stopped. Monitoring and auto-trading disabled.")
                     if telegram_notifier.is_configured():
-                        asyncio.run(telegram_notifier.send_message("🚀 Trading enabled via dashboard!"))
+                        asyncio.run(telegram_notifier.send_message("⏸️ Execution stopped via dashboard"))
+            else:
+                if st.button("▶️ Start Execution", key="start_execution", type="primary"):
+                    try:
+                        self.trader.enable_trading()
+                    except Exception:
+                        pass
+                    st.session_state.trading_enabled = True
+                    st.session_state.auto_trading_active = True
+                    st.session_state.signal_monitoring_active = True
+                    # start poller
+                    try:
+                        self.start_position_poller()
+                    except Exception:
+                        pass
+                    st.success("Execution started. Monitoring and auto-trading enabled.")
+                    if telegram_notifier.is_configured():
+                        asyncio.run(telegram_notifier.send_message("▶️ Execution started via dashboard"))
         
         with col2:
-            if st.button("🛑 Disable Trading", type="secondary" if not st.session_state.trading_enabled else "primary"):
-                if st.session_state.trading_enabled:
-                    self.trader.disable_trading()
-                    st.session_state.trading_enabled = False
-                    st.session_state.auto_trading_active = False  # Also disable auto-trading
-                    st.warning("Trading disabled. No new trades will be executed.")
-                    if telegram_notifier.is_configured():
-                        asyncio.run(telegram_notifier.send_message("🛑 Trading disabled via dashboard."))
-        
-        with col3:
             if st.button("📱 Test Telegram"):
                 if telegram_notifier.is_configured():
                     asyncio.run(telegram_notifier.send_message("📊 Dashboard test message - All systems operational!"))
@@ -280,9 +309,9 @@ class StreamlitTradingDashboard:
         
         # Trading status
         if st.session_state.trading_enabled:
-            st.markdown('<p class="status-green">✅ Trading is ENABLED - Real trades will be executed</p>', unsafe_allow_html=True)
+            st.markdown('<p class="status-green">✅ Execution: RUNNING</p>', unsafe_allow_html=True)
         else:
-            st.markdown('<p class="status-yellow">⚠️ Trading is DISABLED - Monitoring only</p>', unsafe_allow_html=True)
+            st.markdown('<p class="status-red">⏸️ Execution: STOPPED</p>', unsafe_allow_html=True)
         
         # Add cloud monitoring controls
         st.divider()
@@ -559,60 +588,18 @@ class StreamlitTradingDashboard:
     
     def render_cloud_monitoring_controls(self):
         """Render cloud monitoring controls for 24/7 operation"""
-        st.subheader("☁️ Cloud Monitoring Controls")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            if st.button("🔍 Start Signal Monitoring", type="primary" if not st.session_state.signal_monitoring_active else "secondary"):
-                st.session_state.signal_monitoring_active = not st.session_state.signal_monitoring_active
-                status = "started" if st.session_state.signal_monitoring_active else "stopped"
-                st.success(f"Signal monitoring {status}!")
-                
-                if telegram_notifier.is_configured():
-                    asyncio.run(telegram_notifier.send_message(f"🔍 Signal monitoring {status} via dashboard"))
-        
-        with col2:
-            if st.button("🤖 Toggle Auto-Trading", type="primary" if not st.session_state.auto_trading_active else "secondary"):
-                if st.session_state.trading_enabled:
-                    st.session_state.auto_trading_active = not st.session_state.auto_trading_active
-                    status = "enabled" if st.session_state.auto_trading_active else "disabled"
-                    st.success(f"Auto-trading {status}!")
-                    
-                    if telegram_notifier.is_configured():
-                        asyncio.run(telegram_notifier.send_message(f"🤖 Auto-trading {status} via dashboard"))
-                else:
-                    st.error("Enable trading first!")
-        
-        with col3:
-            if st.button("📊 Check Signals Now"):
-                with st.spinner("Checking for signals..."):
-                    signals = self.monitor_trading_signals()
-                    if signals:
-                        st.success(f"Found {len(signals)} signals!")
-                        for signal in signals:
-                            st.write(f"• {signal['symbol']}: {signal['type']} at ${signal['price']:.4f}")
-                    else:
-                        st.info("No signals found at this time")
-        
-        # Status indicators
-        st.markdown("### 📊 Cloud Status")
-        col1, col2, col3, col4 = st.columns(4)
-        
+        st.subheader("☁️ Cloud Monitoring")
+        # Minimal controls: show status and single Start/Stop execution button (managed above)
+        col1, col2 = st.columns(2)
         with col1:
             status = "🟢 ACTIVE" if st.session_state.signal_monitoring_active else "🔴 INACTIVE"
             st.markdown(f"**Signal Monitoring:** {status}")
-        
+            status2 = "🟢 ENABLED" if st.session_state.auto_trading_active else "🔴 DISABLED"
+            st.markdown(f"**Auto-Trading:** {status2}")
         with col2:
-            status = "🟢 ENABLED" if st.session_state.auto_trading_active else "🔴 DISABLED"
-            st.markdown(f"**Auto-Trading:** {status}")
-        
-        with col3:
             last_check = st.session_state.last_signal_check
             time_ago = (datetime.now() - last_check).total_seconds()
             st.markdown(f"**Last Check:** {int(time_ago)}s ago")
-        
-        with col4:
             uptime = datetime.now() - st.session_state.get('app_start_time', datetime.now())
             st.markdown(f"**Uptime:** {int(uptime.total_seconds()/3600)}h")
 
@@ -644,11 +631,6 @@ class StreamlitTradingDashboard:
         else:
             st.sidebar.error(safety_msg)
 
-        # Auto-trade toggle
-        auto_trade = st.sidebar.checkbox("Enable Auto-trade", value=False)
-        st.session_state.auto_trading_active = auto_trade
-
-        st.sidebar.markdown("---")
         # Manual execution
         if signal in ['LONG', 'SHORT']:
             exec_label = f"Execute {signal} on {selected_symbol}"
