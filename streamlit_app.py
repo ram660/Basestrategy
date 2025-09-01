@@ -17,6 +17,14 @@ from typing import Dict, List, Optional
 import logging
 import os
 
+# Global position cache and poller controls (updated by background thread)
+GLOBAL_POSITION_CACHE = {
+    'positions': [],
+    'last_poll': None,
+}
+_position_poller_thread = None
+_position_poller_lock = threading.Lock()
+
 # Import our core modules
 from rsi_ma_strategy import OptimizedRSIMAStrategy
 from bitget_futures_trader import BitgetFuturesTrader
@@ -327,7 +335,12 @@ class StreamlitTradingDashboard:
         """Render current positions"""
         st.subheader("💼 Current Positions")
         
-        positions = self.get_current_positions()
+        # Use GLOBAL_POSITION_CACHE if available to avoid blocking API calls
+        with _position_poller_lock:
+            cached = GLOBAL_POSITION_CACHE.get('positions', [])
+            last_poll = GLOBAL_POSITION_CACHE.get('last_poll')
+
+        positions = cached if cached else self.get_current_positions()
         
         if positions:
             for pos in positions:
@@ -346,12 +359,16 @@ class StreamlitTradingDashboard:
                     st.metric("Size", f"{size:.4f}")
                 
                 with col4:
-                    unrealized_pnl = float(pos.get('unrealizedPnl', 0))
+                    unrealized_pnl = float(pos.get('unrealized_pnl', pos.get('unrealizedPnl', 0)))
                     pnl_color = "🟢" if unrealized_pnl > 0 else "🔴" if unrealized_pnl < 0 else "⚪"
                     st.metric("PnL", f"{pnl_color} ${unrealized_pnl:.2f}")
         else:
             st.info("No active positions")
-    
+
+        # Show last poll time
+        if last_poll:
+            st.caption(f"Last polled: {last_poll.strftime('%Y-%m-%d %H:%M:%S')}")
+        
     def render_strategy_config(self):
         """Render strategy configuration"""
         st.subheader("⚙️ Strategy Configuration")
@@ -378,6 +395,12 @@ class StreamlitTradingDashboard:
             if not st.session_state.signal_monitoring_active:
                 return
             
+            # Reconcile positions first
+            try:
+                self.monitor_positions_reconciliation()
+            except Exception:
+                pass
+
             signals_found = []
             
             for symbol in self.symbols:
@@ -592,6 +615,230 @@ class StreamlitTradingDashboard:
         with col4:
             uptime = datetime.now() - st.session_state.get('app_start_time', datetime.now())
             st.markdown(f"**Uptime:** {int(uptime.total_seconds()/3600)}h")
+
+    def render_signals_panel(self):
+        """Render real-time signals panel with execute controls"""
+        st.sidebar.header("Signals & Execution")
+
+        # Select symbol
+        selected_symbol = st.sidebar.selectbox("Symbol", self.symbols, index=0)
+
+        # Fetch market data and signal
+        market_data = self.get_market_data(selected_symbol)
+        signal = market_data.get('signal', 'HOLD')
+
+        st.sidebar.markdown("---")
+        st.sidebar.subheader(f"Latest Signal: {signal}")
+        st.sidebar.metric("Price", f"{market_data.get('price', 0):.4f}")
+        st.sidebar.metric("RSI", f"{market_data.get('rsi', 0):.2f}")
+        st.sidebar.metric("MA53", f"{market_data.get('ma53', 0):.4f}")
+        st.sidebar.write("Confidence: N/A")
+        st.sidebar.write(market_data.get('signal'))
+
+        st.sidebar.markdown("---")
+        # Safety summary
+        safety_ok, safety_msg = self.trader.check_account_safety()
+        st.sidebar.write("**Safety Check**")
+        if safety_ok:
+            st.sidebar.success(safety_msg)
+        else:
+            st.sidebar.error(safety_msg)
+
+        # Auto-trade toggle
+        auto_trade = st.sidebar.checkbox("Enable Auto-trade", value=False)
+        st.session_state.auto_trading_active = auto_trade
+
+        st.sidebar.markdown("---")
+        # Manual execution
+        if signal in ['LONG', 'SHORT']:
+            exec_label = f"Execute {signal} on {selected_symbol}"
+            if st.sidebar.button(exec_label):
+                # Confirmation
+                if st.sidebar.checkbox("Confirm execution"):
+                    # Execute - do not block UI; run safely
+                    with st.spinner("Placing order..."):
+                        try:
+                            side = 'LONG' if signal == 'LONG' else 'SHORT'
+                            position = self.trader.place_order_with_sl_tp(selected_symbol, side, market_data.get('price', 0))
+                            if position:
+                                st.sidebar.success(f"Order placed: {position.position_id}")
+                                # log to session
+                                st.session_state.positions.append({
+                                    'symbol': selected_symbol,
+                                    'side': side,
+                                    'entry_price': position.entry_price,
+                                    'size': position.size,
+                                    'sl': position.stop_loss,
+                                    'tp': position.take_profit,
+                                    'timestamp': position.timestamp
+                                })
+                                # Optional telegram notify
+                                try:
+                                    from telegram_notifier import telegram_notifier
+                                    telegram_notifier.send_message(f"Executed {side} {selected_symbol} @ {position.entry_price:.4f}")
+                                except Exception:
+                                    pass
+                            else:
+                                st.sidebar.error("Failed to place order. Check logs.")
+                        except Exception as e:
+                            st.sidebar.error(f"Execution error: {e}")
+        else:
+            st.sidebar.info("No actionable signal")
+
+        st.sidebar.markdown("---")
+        st.sidebar.write("Last checked:", st.session_state.last_signal_check.strftime('%Y-%m-%d %H:%M:%S'))
+
+    def render_dashboard(self):
+        """Top-level renderer"""
+        self.render_header()
+
+        # Left column: signals & positions
+        col1, col2 = st.columns([1, 2])
+
+        with col1:
+            st.header("Signals & Controls")
+            self.render_signals_panel()
+
+        with col2:
+            st.header("Positions & Trade History")
+            # Positions table
+            if st.session_state.positions:
+                st.table(st.session_state.positions[-10:])
+            else:
+                st.info("No active positions recorded in session")
+
+            st.markdown("---")
+            st.subheader("Recent Trades (session)")
+            if st.session_state.trade_history:
+                st.table(st.session_state.trade_history[-20:])
+            else:
+                st.info("No trades recorded this session")
+
+    def monitor_positions_reconciliation(self, poll_interval: int = 10):
+        """Fetch positions from exchange, detect closed positions and reconcile logs.
+
+        This is a single-run reconciliation pass — call periodically from the main loop.
+        """
+        try:
+            # Fetch current positions from exchange
+            current_positions = self.trader.get_active_positions() or []
+            current_symbols = {p['symbol']: p for p in current_positions}
+
+            # Build previous positions map from session state
+            prev_positions_list = st.session_state.get('positions', [])
+            prev_by_symbol = {p['symbol']: p for p in prev_positions_list}
+
+            # Detect closed positions: present previously but not in current_symbols
+            closed_symbols = [s for s in prev_by_symbol.keys() if s not in current_symbols]
+
+            for symbol in closed_symbols:
+                prev = prev_by_symbol[symbol]
+                # Attempt to determine exit price and PnL
+                exit_price = get_current_price(symbol) or prev.get('entry_price')
+                size = float(prev.get('size', 0))
+                side = prev.get('side', 'LONG')
+                entry_price = float(prev.get('entry_price', exit_price))
+
+                # Compute approximate pnl: long -> (exit-entry)*size, short -> (entry-exit)*size
+                try:
+                    if side.upper() in ['LONG', 'long']:
+                        pnl = (exit_price - entry_price) * size
+                    else:
+                        pnl = (entry_price - exit_price) * size
+                except Exception:
+                    pnl = 0.0
+
+                exit_time = datetime.now()
+                exit_reason = 'CLOSED (exchange)'
+
+                # Try to find trade_id from trader.positions if available
+                trade_id = None
+                try:
+                    tp = self.trader.positions.get(symbol)
+                    if tp and hasattr(tp, 'trade_id'):
+                        trade_id = tp.trade_id
+                except Exception:
+                    trade_id = None
+
+                # Log exit to trade_logger if possible
+                if trade_id and trade_logger:
+                    try:
+                        trade_logger.log_trade_exit(
+                            trade_id=trade_id,
+                            exit_price=exit_price,
+                            exit_reason=exit_reason,
+                            fees=0.0,
+                            notes=f"Reconciled exit detected via polling"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to log trade exit for {symbol}: {e}")
+
+                # Append to session trade history
+                st.session_state.trade_history.append({
+                    'symbol': symbol,
+                    'side': side,
+                    'entry_price': entry_price,
+                    'exit_price': exit_price,
+                    'pnl': pnl,
+                    'exit_reason': exit_reason,
+                    'exit_time': exit_time.strftime('%Y-%m-%d %H:%M:%S')
+                })
+
+                # Remove from local session positions
+                st.session_state.positions = [p for p in st.session_state.positions if p.get('symbol') != symbol]
+
+                logger.info(f"Reconciled closed position: {symbol} side={side} pnl=${pnl:.2f}")
+
+            # Update session positions to reflect current exchange state
+            new_session_positions = []
+            for p in current_positions:
+                # Normalize fields to session format
+                new_session_positions.append({
+                    'symbol': p.get('symbol'),
+                    'side': p.get('side'),
+                    'entry_price': p.get('entry_price'),
+                    'size': p.get('size'),
+                    'sl': p.get('stop_loss', None) if isinstance(p, dict) else None,
+                    'tp': p.get('take_profit', None) if isinstance(p, dict) else None,
+                    'unrealized_pnl': p.get('unrealized_pnl', p.get('unrealizedPnl', 0)),
+                    'mark_price': p.get('mark_price', p.get('markPrice', 0)),
+                })
+
+            st.session_state.positions = new_session_positions
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error in position reconciliation: {e}")
+            return False
+
+    def _position_poller(self, interval: int = 10):
+        """Background thread that polls exchange positions and updates GLOBAL_POSITION_CACHE."""
+        global GLOBAL_POSITION_CACHE
+        while st.session_state.get('signal_monitoring_active', False):
+            try:
+                positions = self.trader.get_active_positions() or []
+                with _position_poller_lock:
+                    GLOBAL_POSITION_CACHE['positions'] = positions
+                    GLOBAL_POSITION_CACHE['last_poll'] = datetime.now()
+                time.sleep(interval)
+            except Exception as e:
+                logger.error(f"Position poller error: {e}")
+                time.sleep(interval)
+
+    def start_position_poller(self, interval: int = 10):
+        """Start background poller thread if not running"""
+        global _position_poller_thread
+        if _position_poller_thread and _position_poller_thread.is_alive():
+            return
+        _position_poller_thread = threading.Thread(target=self._position_poller, args=(interval,), daemon=True)
+        _position_poller_thread.start()
+        logger.info("Started position poller thread")
+
+    def stop_position_poller(self):
+        """Stop background poller by toggling session flag; thread will exit gracefully."""
+        st.session_state.signal_monitoring_active = False
+        logger.info("Stopped position poller thread")
 
     def run(self):
         """Main dashboard runner - Enhanced for 24/7 cloud operation"""
