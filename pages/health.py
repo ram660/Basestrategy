@@ -10,10 +10,11 @@ import json
 import sys
 import os
 
-# Add current directory to Python path
+# Add parent directory to Python path for imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 st.set_page_config(
     page_title="Trading Bot Health Check",
@@ -24,39 +25,88 @@ st.set_page_config(
 def health_check():
     """Simple health check page"""
     try:
+        # Setup environment for Streamlit Cloud
+        if hasattr(st, 'secrets') and st.secrets:
+            for key in st.secrets:
+                os.environ[key] = str(st.secrets[key])
+        
         # Import modules to verify they're working
         from config import config
         from trade_logger import trade_logger
         
         current_time = datetime.now()
         
+        # Check component health
+        components = {}
+        
+        # Test config module
+        try:
+            components["config"] = config.is_production() is not None
+        except:
+            components["config"] = False
+            
+        # Test trade logger
+        try:
+            components["trade_logger"] = hasattr(trade_logger, 'log_trade')
+        except:
+            components["trade_logger"] = False
+            
+        # Test strategy module
+        try:
+            from rsi_ma_strategy import OptimizedRSIMAStrategy
+            components["strategy"] = True
+        except:
+            components["strategy"] = False
+            
+        # Test trader module
+        try:
+            from bitget_futures_trader import BitgetFuturesTrader
+            components["trader"] = True
+        except:
+            components["trader"] = False
+        
+        # Overall health status
+        all_healthy = all(components.values())
+        status = "healthy" if all_healthy else "degraded"
+        
         # Health status
         health_data = {
-            "status": "healthy",
+            "status": status,
             "timestamp": current_time.isoformat(),
             "service": "trading-bot",
             "version": "1.0.0",
             "uptime": True,
-            "components": {
-                "config": True,
-                "trade_logger": True,
-                "strategy": True
-            }
+            "environment": config.system.environment.value if 'config' in locals() else "unknown",
+            "components": components
         }
         
         # Display health check
         st.title("💚 Trading Bot Health Check")
-        st.success("🟢 System Status: HEALTHY")
+        
+        if all_healthy:
+            st.success("🟢 System Status: HEALTHY")
+        else:
+            st.warning("🟡 System Status: DEGRADED")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.metric("Status", "ONLINE")
-            st.metric("Uptime", "ACTIVE")
+            st.metric("Status", "ONLINE" if all_healthy else "DEGRADED")
+            st.metric("Environment", health_data.get("environment", "unknown").upper())
         
         with col2:
             st.metric("Timestamp", current_time.strftime("%H:%M:%S"))
-            st.metric("Components", "ALL OK")
+            working_components = sum(components.values())
+            total_components = len(components)
+            st.metric("Components", f"{working_components}/{total_components} OK")
+        
+        # Component details
+        st.subheader("Component Status")
+        for component, status in components.items():
+            if status:
+                st.success(f"✅ {component.title()}: OK")
+            else:
+                st.error(f"❌ {component.title()}: FAILED")
         
         # JSON response for monitoring tools
         st.subheader("JSON Response")

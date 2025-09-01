@@ -94,20 +94,19 @@ class SystemConfig:
 class ConfigManager:
     """Centralized configuration manager"""
     
-    def __init__(self, config_file: str = "config.json", testing_mode: bool = False):
+    def __init__(self, config_file: str = "config.json"):
         self.config_file = config_file
-        self.testing_mode = testing_mode
+        # Production-ready: no testing_mode flag; always validate required settings
         self.trading = TradingConfig()
         self.api = APIConfig()
         self.system = SystemConfig()
         
-        # Load configuration
+        # Load configuration (env vars should be set in production)
         self._load_from_env()
         self._load_from_file()
         
-        # Validate configuration (skip API validation in testing mode)
-        if not testing_mode:
-            self._validate_config()
+        # Validate configuration strictly for production readiness
+        self._validate_config()
 
     def _load_from_env(self):
         """Load configuration from environment variables"""
@@ -130,6 +129,11 @@ class ConfigManager:
             # System Configuration
             if os.getenv('ENVIRONMENT'):
                 self.system.environment = Environment(os.getenv('ENVIRONMENT'))
+            elif self._is_cloud_environment():
+                # Auto-detect cloud environment as production
+                self.system.environment = Environment.PRODUCTION
+                logger.info("🌐 Auto-detected cloud environment, setting to PRODUCTION mode")
+            
             if os.getenv('DEBUG_MODE'):
                 self.system.debug_mode = os.getenv('DEBUG_MODE').lower() == 'true'
             if os.getenv('LOG_LEVEL'):
@@ -175,7 +179,7 @@ class ConfigManager:
             errors = []
             
             # Validate API credentials (skip in testing mode)
-            if not skip_api_validation and not self.testing_mode:
+            if not skip_api_validation:
                 if not self.api.bitget_api_key:
                     errors.append("Missing BITGET_API_KEY")
                 if not self.api.bitget_secret_key:
@@ -282,10 +286,19 @@ class ConfigManager:
         """Check if debug mode is enabled"""
         return self.system.debug_mode
 
-# Global configuration instance (with testing mode detection)
-import sys
-testing_mode = 'test' in sys.argv[0].lower() or 'pytest' in sys.modules
-config = ConfigManager(testing_mode=testing_mode)
+    def _is_cloud_environment(self) -> bool:
+        """Detect if running in a cloud environment like Streamlit Cloud"""
+        cloud_indicators = [
+            'STREAMLIT_CLOUD' in os.environ,
+            'STREAMLIT_SHARING' in os.environ,
+            os.environ.get('USER') == 'appuser',  # Common cloud user
+            'streamlit.io' in os.environ.get('HOME', ''),
+            'HOSTNAME' in os.environ and 'streamlit' in os.environ.get('HOSTNAME', '').lower()
+        ]
+        return any(cloud_indicators)
+
+# Global configuration instance
+config = ConfigManager()
 
 def validate_config() -> bool:
     """Validate the global configuration"""

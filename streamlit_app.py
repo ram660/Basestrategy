@@ -115,7 +115,7 @@ class StreamlitTradingDashboard:
             st.session_state.app_start_time = datetime.now()
         
         # Auto-start monitoring for cloud environment
-        if self.is_cloud and config.get_trading_config()['environment'] == 'production':
+        if self.is_cloud and config.is_production():
             if not st.session_state.signal_monitoring_active:
                 st.session_state.signal_monitoring_active = True
                 logger.info("🚀 Auto-started signal monitoring for cloud environment")
@@ -713,7 +713,7 @@ def main():
         st.write("✅ Dashboard initialized successfully")
         
         # Auto-start signal monitoring in cloud environment
-        if config.system.environment.value == 'production' and not st.session_state.get('auto_monitor_started', False):
+        if config.is_production() and not st.session_state.get('auto_monitor_started', False):
             st.session_state.signal_monitoring_active = True
             st.session_state.auto_monitor_started = True
             st.info("🔍 Auto-started signal monitoring for cloud deployment")
