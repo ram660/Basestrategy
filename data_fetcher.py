@@ -28,10 +28,12 @@ class PriceData:
     timeframe: str
 
 class BitgetDataFetcher:
-    """Simple Bitget data fetcher for public market data"""
+    """Simple Bitget data fetcher for public market data with caching"""
 
     def __init__(self):
         self.base_url = "https://api.bitget.com"
+        self._price_cache = {}  # Simple price cache
+        self._cache_timeout = 30  # Cache for 30 seconds
 
     def fetch_kline_data(self, symbol: str, interval: str = '5m', limit: int = 200) -> pd.DataFrame:
         """
@@ -97,8 +99,17 @@ class BitgetDataFetcher:
             return pd.DataFrame()
 
     def get_current_price(self, symbol: str) -> Optional[float]:
-        """Get current price for symbol"""
+        """Get current price for symbol with caching and enhanced error handling"""
         try:
+            # Check cache first
+            cache_key = f"price_{symbol}"
+            current_time = datetime.now()
+            
+            if cache_key in self._price_cache:
+                cached_price, cached_time = self._price_cache[cache_key]
+                if (current_time - cached_time).seconds < self._cache_timeout:
+                    return cached_price
+            
             url = f"{self.base_url}/api/v2/spot/market/tickers"
             params = {'symbol': symbol}
 
@@ -107,7 +118,12 @@ class BitgetDataFetcher:
             result = response.json()
 
             if result.get('code') != '00000' or not result.get('data'):
-                logger.warning(f"⚠️ No price data received for {symbol}")
+                logger.warning(f"⚠️ No price data received for {symbol} - API response code: {result.get('code')}")
+                # Return cached price if available
+                if cache_key in self._price_cache:
+                    cached_price, _ = self._price_cache[cache_key]
+                    logger.info(f"Returning cached price for {symbol}: {cached_price}")
+                    return cached_price
                 return None
 
             # Bitget returns an array of tickers, get the first one
@@ -116,10 +132,32 @@ class BitgetDataFetcher:
                 logger.warning(f"⚠️ No ticker data for {symbol}")
                 return None
 
-            return float(ticker_data['lastPr'])
+            price = ticker_data.get('lastPr')
+            if price is None:
+                logger.warning(f"⚠️ No lastPr field for {symbol}")
+                return None
 
+            price_float = float(price)
+            
+            # Cache the price
+            self._price_cache[cache_key] = (price_float, current_time)
+            
+            return price_float
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Network error fetching price for {symbol}: {e}")
+            # Return cached price if available
+            cache_key = f"price_{symbol}"
+            if cache_key in self._price_cache:
+                cached_price, _ = self._price_cache[cache_key]
+                logger.info(f"Network error - returning cached price for {symbol}: {cached_price}")
+                return cached_price
+            return None
+        except (ValueError, KeyError, TypeError) as e:
+            logger.error(f"❌ Data parsing error for {symbol}: {e}")
+            return None
         except Exception as e:
-            logger.error(f"❌ Error getting current price for {symbol}: {e}")
+            logger.error(f"❌ Unexpected error fetching price for {symbol}: {e}")
             return None
 
 class DataProcessor:

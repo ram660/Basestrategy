@@ -32,12 +32,14 @@ load_environment()
 logger = logging.getLogger(__name__)
 
 class TelegramNotifier:
-    """Telegram notification system for trading alerts"""
+    """Telegram notification system for trading alerts with reduced frequency"""
     
     def __init__(self):
         self.token = os.getenv('TELEGRAM_BOT_TOKEN')
         self.chat_id = os.getenv('TELEGRAM_CHAT_ID')  # Load chat ID from environment
         self.bot = None
+        self.last_status_update = None  # Track last status update
+        self.status_update_interval = 3 * 60 * 60  # 3 hours in seconds
         
         if self.token:
             self.bot = Bot(token=self.token)
@@ -69,10 +71,58 @@ class TelegramNotifier:
                 text=message,
                 parse_mode=parse_mode
             )
+            logger.info("📱 Telegram message sent successfully")
             return True
         except Exception as e:
             logger.error(f"❌ Failed to send Telegram message: {e}")
             return False
+
+    def should_send_status_update(self) -> bool:
+        """Check if enough time has passed for a status update"""
+        from datetime import datetime
+        
+        now = datetime.now()
+        if self.last_status_update is None:
+            return True
+        
+        time_since_last = (now - self.last_status_update).total_seconds()
+        return time_since_last >= self.status_update_interval
+
+    async def send_periodic_status(self, stats: Dict[str, Any] = None):
+        """Send periodic status update (every 3 hours)"""
+        if not self.should_send_status_update():
+            return False
+        
+        from datetime import datetime
+        
+        message = f"""
+🤖 **Bot Status Update**
+
+✅ System Running
+📊 Paper Trading: {'ON' if hasattr(self, '_paper_mode') and self._paper_mode else 'Check Dashboard'}
+⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+"""
+        
+        if stats:
+            total_trades = stats.get('total_trades', 0)
+            total_pnl = stats.get('total_pnl', 0)
+            pnl_emoji = "💚" if total_pnl > 0 else "❤️" if total_pnl < 0 else "💙"
+            
+            message += f"""
+� Session Stats:
+• Trades: {total_trades}
+• P&L: {pnl_emoji} ${total_pnl:.2f}
+"""
+        
+        logger.info("📱 Sending 3-hour status update")
+        result = await self.send_message(message)
+        if result:
+            self.last_status_update = datetime.now()
+            logger.info("✅ Status update sent successfully")
+        else:
+            logger.warning("❌ Failed to send status update")
+        
+        return result
     
     async def notify_trade_entry(self, symbol: str, side: str, entry_price: float, 
                                 stop_loss: float, take_profit: float, 
@@ -117,25 +167,18 @@ class TelegramNotifier:
     
     async def notify_signal(self, symbol: str, action: str, price: float, 
                            rsi: float, confidence: float):
-        """Send trading signal notification"""
-        action_emoji = "🔵" if action == "BUY" else "🔴" if action == "SELL" else "⚪"
-        
-        message = f"""
-📡 **TRADING SIGNAL**
-
-{action_emoji} **{symbol} - {action.upper()}**
-💰 Price: ${price:.4f}
-📊 RSI: {rsi:.1f}
-🎯 Confidence: {confidence:.1%}
-
-⏰ {datetime.now().strftime('%H:%M:%S')}
-💡 RSI-MA Strategy
-        """
-        
-        await self.send_message(message)
+        """Send trading signal notification - DISABLED to reduce spam"""
+        # Only log signals, don't send notifications
+        logger.info(f"📡 Signal detected: {symbol} {action} at ${price:.4f} (RSI: {rsi:.1f}, Confidence: {confidence:.1%})")
+        return True  # Return True to maintain compatibility
     
     async def notify_system_status(self, status: str, message: str = ""):
-        """Send system status notification"""
+        """Send system status notification - ONLY for critical events"""
+        if status.upper() not in ["STARTED", "STOPPED", "ERROR"]:
+            # Only send notifications for critical status changes
+            logger.info(f"System status: {status} - {message}")
+            return True
+        
         status_emoji = "✅" if status == "STARTED" else "🛑" if status == "STOPPED" else "⚠️"
         
         notification = f"""
@@ -149,23 +192,10 @@ class TelegramNotifier:
         await self.send_message(notification)
     
     async def notify_performance_update(self, stats: Dict[str, Any]):
-        """Send performance update"""
-        win_rate = stats.get('win_rate', 0) * 100
-        total_pnl = stats.get('total_pnl', 0)
-        total_trades = stats.get('total_trades', 0)
-        
-        pnl_emoji = "💚" if total_pnl > 0 else "❤️" if total_pnl < 0 else "💛"
-        
-        message = f"""
-📊 **PERFORMANCE UPDATE**
-
-{pnl_emoji} Total P&L: ${total_pnl:.2f}
-📈 Win Rate: {win_rate:.1f}%
-🔢 Total Trades: {total_trades}
-⏰ {datetime.now().strftime('%H:%M:%S')}
-        """
-        
-        await self.send_message(message)
+        """Send performance update - DISABLED, use periodic status instead"""
+        # Performance updates are now handled by send_periodic_status
+        logger.debug(f"Performance update: {stats}")
+        return True  # Return True to maintain compatibility
     
     async def notify_error(self, error_type: str, error_message: str):
         """Send error notification"""

@@ -185,22 +185,40 @@ class StreamlitTradingDashboard:
             return []
     
     def get_market_data(self, symbol: str) -> Dict:
-        """Get current market data for a symbol"""
+        """Get current market data for a symbol with robust error handling"""
         try:
             price = get_current_price(symbol)
             df = get_historical_data(symbol, '5m', 100)
+            
+            # Handle None price
+            if price is None:
+                logger.warning(f"Price data unavailable for {symbol}")
+                price = 0.0
             
             if df is not None and len(df) > 53:
                 df_with_indicators = self.strategy.update_indicators(df)
                 current_row = df_with_indicators.iloc[-1]
                 
+                # Ensure all values are not None
+                rsi_val = current_row['rsi']
+                ma53_val = current_row['ma53'] 
+                ma50_val = current_row['ma50']
+                
+                # Handle None/NaN values in indicators
+                if pd.isna(rsi_val):
+                    rsi_val = 50.0
+                if pd.isna(ma53_val):
+                    ma53_val = price
+                if pd.isna(ma50_val):
+                    ma50_val = price
+                
                 return {
                     'symbol': symbol,
-                    'price': price,
-                    'rsi': current_row['rsi'],
-                    'ma53': current_row['ma53'],
-                    'ma50': current_row['ma50'],
-                    'price_above_ma53': current_row['price_above_ma53'],
+                    'price': float(price) if price is not None else 0.0,
+                    'rsi': float(rsi_val),
+                    'ma53': float(ma53_val),
+                    'ma50': float(ma50_val),
+                    'price_above_ma53': current_row['price_above_ma53'] if pd.notna(current_row['price_above_ma53']) else False,
                     'signal': self.get_trading_signal(df_with_indicators)
                 }
         except Exception as e:
@@ -209,7 +227,7 @@ class StreamlitTradingDashboard:
         return {
             'symbol': symbol,
             'price': 0.0,
-            'rsi': 0.0,
+            'rsi': 50.0,
             'ma53': 0.0,
             'ma50': 0.0,
             'price_above_ma53': False,
@@ -399,7 +417,7 @@ class StreamlitTradingDashboard:
         self.render_cloud_monitoring_controls()
     
     def render_market_overview(self):
-        """Render market overview"""
+        """Render market overview with robust error handling"""
         st.subheader("📈 Market Overview")
         
         market_data = []
@@ -422,22 +440,34 @@ class StreamlitTradingDashboard:
                         'NO_DATA': '⚪'
                     }.get(data['signal'], '⚪')
                     
+                    # Safe price formatting
+                    price_val = data.get('price', 0.0)
+                    if price_val is None or pd.isna(price_val):
+                        price_val = 0.0
+                    
+                    # Safe RSI formatting
+                    rsi_val = data.get('rsi', 50.0)
+                    if rsi_val is None or pd.isna(rsi_val):
+                        rsi_val = 50.0
+                    
                     st.metric(
                         label=f"{signal_color} {data['symbol']}",
-                        value=f"${data['price']:.4f}",
-                        delta=f"RSI: {data['rsi']:.1f}"
+                        value=f"${float(price_val):.4f}",
+                        delta=f"RSI: {float(rsi_val):.1f}"
                     )
                     
                     if data['signal'] != 'NO_DATA':
                         st.caption(f"Signal: {data['signal']}")
             
-            # Detailed table
+            # Detailed table with safe formatting
             st.subheader("📊 Detailed Analysis")
             display_df = df[['symbol', 'price', 'rsi', 'ma53', 'ma50', 'signal']].copy()
-            display_df['price'] = display_df['price'].apply(lambda x: f"${x:.4f}")
-            display_df['rsi'] = display_df['rsi'].apply(lambda x: f"{x:.1f}")
-            display_df['ma53'] = display_df['ma53'].apply(lambda x: f"${x:.4f}")
-            display_df['ma50'] = display_df['ma50'].apply(lambda x: f"${x:.4f}")
+            
+            # Safe formatting for all numeric columns
+            display_df['price'] = display_df['price'].apply(lambda x: f"${float(x) if x is not None and not pd.isna(x) else 0.0:.4f}")
+            display_df['rsi'] = display_df['rsi'].apply(lambda x: f"{float(x) if x is not None and not pd.isna(x) else 50.0:.1f}")
+            display_df['ma53'] = display_df['ma53'].apply(lambda x: f"${float(x) if x is not None and not pd.isna(x) else 0.0:.4f}")
+            display_df['ma50'] = display_df['ma50'].apply(lambda x: f"${float(x) if x is not None and not pd.isna(x) else 0.0:.4f}")
             
             st.dataframe(display_df, use_container_width=True)
     
@@ -547,9 +577,9 @@ class StreamlitTradingDashboard:
                         if st.session_state.auto_trading_active and st.session_state.trading_enabled:
                             self.execute_signal(signal_data)
                         
-                        # Send notification
-                        if telegram_notifier.is_configured():
-                            asyncio.run(self.send_signal_notification(signal_data))
+                        # Send notification ONLY for trade execution (not signals)
+                        # Signal notifications are disabled to reduce spam
+                        # Only trade execution notifications will be sent
                             
                 except Exception as e:
                     logger.error(f"Error monitoring {symbol}: {e}")
@@ -557,6 +587,15 @@ class StreamlitTradingDashboard:
             
             # Update last check time
             st.session_state.last_signal_check = datetime.now()
+            
+            # Send periodic status update (every 3 hours)
+            if telegram_notifier.is_configured():
+                try:
+                    # Get current strategy stats for status update
+                    strategy_stats = self.strategy.get_strategy_stats() if hasattr(self.strategy, 'get_strategy_stats') else {}
+                    asyncio.run(telegram_notifier.send_periodic_status(strategy_stats))
+                except Exception as e:
+                    logger.debug(f"Status update error (non-critical): {e}")
             
             return signals_found
             
@@ -635,10 +674,16 @@ class StreamlitTradingDashboard:
                 
                 logger.info(f"✅ Auto-executed {side} signal for {signal_data['symbol']} at ${signal_data['price']:.4f}")
                 
-                # Send success notification
+                # Send trade execution notification (IMPORTANT: Only notification that will be sent)
                 if telegram_notifier.is_configured():
                     asyncio.run(telegram_notifier.notify_trade_entry(
-                        signal_data['symbol'], side, signal_data['price'], signal_data['rsi']
+                        symbol=signal_data['symbol'], 
+                        side=side, 
+                        entry_price=signal_data['price'],
+                        stop_loss=position.stop_loss,
+                        take_profit=position.take_profit,
+                        position_size=position.quantity,
+                        confidence=signal_data['confidence']
                     ))
             else:
                 logger.error(f"❌ Failed to execute signal for {signal_data['symbol']}")
@@ -647,25 +692,11 @@ class StreamlitTradingDashboard:
             logger.error(f"Error executing signal: {e}")
     
     async def send_signal_notification(self, signal_data: Dict):
-        """Send signal notification via Telegram"""
-        try:
-            message = f"""
-🚨 **TRADING SIGNAL DETECTED**
-
-📊 **Symbol:** {signal_data['symbol']}
-{'🟢 **Signal:** LONG' if signal_data['type'] == 'LONG' else '🔴 **Signal:** SHORT'}
-💰 **Price:** ${signal_data['price']:.4f}
-📈 **RSI:** {signal_data['rsi']:.1f}
-🎯 **Confidence:** {signal_data['confidence']*100:.1f}%
-⏰ **Time:** {signal_data['timestamp'].strftime('%H:%M:%S')}
-
-{'✅ Auto-trading: ENABLED' if st.session_state.auto_trading_active else '⚠️ Auto-trading: DISABLED'}
-            """
-            
-            await telegram_notifier.send_message(message)
-            
-        except Exception as e:
-            logger.error(f"Error sending signal notification: {e}")
+        """Send signal notification via Telegram - DISABLED to reduce spam"""
+        # Signal notifications are now disabled to reduce Telegram spam
+        # Only trade execution and exit notifications will be sent
+        logger.info(f"Signal detected but notification disabled: {signal_data['symbol']} {signal_data['type']}")
+        return True
     
     def render_cloud_monitoring_controls(self):
         """Render cloud monitoring controls for 24/7 operation"""
@@ -851,6 +882,19 @@ class StreamlitTradingDashboard:
                 st.session_state.positions = [p for p in st.session_state.positions if p.get('symbol') != symbol]
 
                 logger.info(f"Reconciled closed position: {symbol} side={side} pnl=${pnl:.2f}")
+                
+                # Send trade exit notification (IMPORTANT: Only notification type that will be sent)
+                if telegram_notifier.is_configured():
+                    try:
+                        asyncio.run(telegram_notifier.notify_trade_exit(
+                            symbol=symbol,
+                            side=side,
+                            exit_price=exit_price,
+                            pnl=pnl,
+                            exit_reason=exit_reason
+                        ))
+                    except Exception as e:
+                        logger.debug(f"Failed to send exit notification for {symbol}: {e}")
 
             # Update session positions to reflect current exchange state
             new_session_positions = []
