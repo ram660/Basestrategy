@@ -22,8 +22,7 @@ try:
     from trade_logger import trade_logger
 except ImportError:
     trade_logger = None
-    logger = logging.getLogger(__name__)
-    logger.warning("⚠️ Trade logger not available - trade logging will be disabled")
+    logging.getLogger(__name__).warning("⚠️ Trade logger not available - trade logging will be disabled")
 
 # Load environment variables
 def load_environment():

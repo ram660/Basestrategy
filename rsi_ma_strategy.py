@@ -24,6 +24,10 @@ from enum import Enum
 import logging
 from datetime import datetime, timedelta
 
+# Import our enhanced systems
+from config import config
+from error_handler import safe_execute, ErrorCategory, ErrorSeverity, log_performance
+
 logger = logging.getLogger(__name__)
 
 class SignalType(Enum):
@@ -62,34 +66,37 @@ class OptimizedRSIMAStrategy:
     """
 
     def __init__(self,
-                 rsi_period: int = 14,
-                 ma53_period: int = 53,
-                 ma50_period: int = 50,
-                 rsi_buy_threshold: float = 60.0,  # Standardized threshold
-                 rsi_sell_threshold: float = 40.0, # Standardized threshold
-                 stop_loss_pct: float = 0.03,      # 3%
-                 take_profit_pct: float = 0.025,   # 2.5% (optimized)
-                 position_size_pct: float = 0.10): # 10% per trade
+                 rsi_period: int = None,
+                 ma53_period: int = None,
+                 ma50_period: int = None,
+                 rsi_buy_threshold: float = None,
+                 rsi_sell_threshold: float = None,
+                 stop_loss_pct: float = None,
+                 take_profit_pct: float = None,
+                 position_size_pct: float = None):
 
-        self.rsi_period = rsi_period
-        self.ma53_period = ma53_period
-        self.ma50_period = ma50_period
-        self.rsi_buy_threshold = rsi_buy_threshold
-        self.rsi_sell_threshold = rsi_sell_threshold
-        self.stop_loss_pct = stop_loss_pct
-        self.take_profit_pct = take_profit_pct
-        self.position_size_pct = position_size_pct
+        # Use configuration system with fallbacks
+        self.rsi_period = rsi_period or config.trading.rsi_period
+        self.ma53_period = ma53_period or config.trading.ma53_period
+        self.ma50_period = ma50_period or config.trading.ma50_period
+        self.rsi_buy_threshold = rsi_buy_threshold or config.trading.rsi_buy_threshold
+        self.rsi_sell_threshold = rsi_sell_threshold or config.trading.rsi_sell_threshold
+        self.stop_loss_pct = stop_loss_pct or (config.trading.stop_loss_percent / 100)
+        self.take_profit_pct = take_profit_pct or (config.trading.take_profit_percent / 100)
+        self.position_size_pct = position_size_pct or 0.10  # Default 10%
 
         self.current_position = None
         self.signals_history = []
         self.trade_history = []
 
-        logger.info(f"Optimized RSI MA Strategy initialized (STANDARDIZED):")
-        logger.info(f"  RSI: {rsi_period} period, Long: >={rsi_buy_threshold}, Short: <={rsi_sell_threshold}")
-        logger.info(f"  MA: {ma53_period} & {ma50_period} periods")
-        logger.info(f"  Risk: {stop_loss_pct*100}% SL, {take_profit_pct*100}% TP")
-        logger.info(f"  Position Size: {position_size_pct*100}% per trade")
+        logger.info(f"Optimized RSI MA Strategy initialized with config:")
+        logger.info(f"  RSI: {self.rsi_period} period, Long: >={self.rsi_buy_threshold}, Short: <={self.rsi_sell_threshold}")
+        logger.info(f"  MA: {self.ma53_period} & {self.ma50_period} periods")
+        logger.info(f"  Risk: {self.stop_loss_pct*100:.1f}% SL, {self.take_profit_pct*100:.1f}% TP")
+        logger.info(f"  Position Size: {self.position_size_pct*100:.1f}% per trade")
 
+    @safe_execute(category=ErrorCategory.DATA_ERROR, severity=ErrorSeverity.MEDIUM)
+    @log_performance
     def calculate_rsi(self, prices: pd.Series, period: int = None) -> pd.Series:
         """Calculate Relative Strength Index"""
         if period is None:
@@ -103,10 +110,13 @@ class OptimizedRSIMAStrategy:
         rsi = 100 - (100 / (1 + rs))
         return rsi
 
+    @safe_execute(category=ErrorCategory.DATA_ERROR, severity=ErrorSeverity.LOW)
     def calculate_moving_average(self, prices: pd.Series, period: int) -> pd.Series:
         """Calculate Simple Moving Average"""
         return prices.rolling(window=period).mean()
 
+    @safe_execute(category=ErrorCategory.DATA_ERROR, severity=ErrorSeverity.MEDIUM)
+    @log_performance
     def update_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate all technical indicators"""
         df = df.copy()
@@ -149,36 +159,34 @@ class OptimizedRSIMAStrategy:
 
         return price_near_ma50 and price_still_below
 
+    @safe_execute(category=ErrorCategory.DATA_ERROR, severity=ErrorSeverity.MEDIUM)
     def generate_long_signal(self, df: pd.DataFrame) -> bool:
-        """Generate long signal: RSI >= 60 AND price > MA53"""
+        """Generate long signal based on RSI-MA strategy"""
         if len(df) < 2:
             return False
-
+        
         current_row = df.iloc[-1]
-
-        # RSI >= 60 threshold (standardized)
+        
+        # RSI >= 60 threshold and price > MA53
         rsi_above_threshold = current_row['rsi'] >= self.rsi_buy_threshold
-
-        # Price above MA53
         price_above_ma53 = current_row['price_above_ma53']
-
+        
         return rsi_above_threshold and price_above_ma53
-
+    
+    @safe_execute(category=ErrorCategory.DATA_ERROR, severity=ErrorSeverity.MEDIUM)
     def generate_short_signal(self, df: pd.DataFrame) -> bool:
-        """Generate short signal: RSI <= 40 AND price < MA53"""
+        """Generate short signal based on RSI-MA strategy"""
         if len(df) < 2:
             return False
-
+        
         current_row = df.iloc[-1]
-
-        # RSI <= 40 threshold (standardized)
+        
+        # RSI <= 40 threshold and price < MA53
         rsi_below_threshold = current_row['rsi'] <= self.rsi_sell_threshold
-
-        # Price below MA53
         price_below_ma53 = current_row['price_below_ma53']
-
+        
         return rsi_below_threshold and price_below_ma53
-
+    
     def create_position(self, signal: TradingSignal, account_balance: float) -> Position:
         """Create a new position based on signal"""
         quantity = account_balance * self.position_size_pct / signal.price
@@ -301,6 +309,71 @@ class OptimizedRSIMAStrategy:
 
         except Exception as e:
             logger.error(f"Error processing data: {str(e)}")
+            return None
+
+    @safe_execute(category=ErrorCategory.DATA_ERROR, severity=ErrorSeverity.MEDIUM)
+    def generate_signal(self, latest_data: pd.Series) -> Optional[TradingSignal]:
+        """Generate trading signal from latest market data"""
+        try:
+            current_price = latest_data.get('close', 0)
+            current_rsi = latest_data.get('rsi', 50)
+            current_ma53 = latest_data.get('ma53', current_price)
+            current_ma50 = latest_data.get('ma50', current_price)
+            
+            # Check for BUY signal (LONG)
+            if (current_rsi >= self.rsi_buy_threshold and 
+                current_price > current_ma53):
+                
+                # Calculate confidence based on RSI strength and MA separation
+                rsi_strength = min((current_rsi - self.rsi_buy_threshold) / 10, 1.0)
+                ma_separation = abs(current_price - current_ma53) / current_price
+                confidence = min(0.5 + (rsi_strength * 0.3) + (ma_separation * 0.2), 1.0)
+                
+                return TradingSignal(
+                    signal_type=SignalType.BUY,
+                    price=current_price,
+                    timestamp=datetime.now(),
+                    rsi=current_rsi,
+                    ma53=current_ma53,
+                    ma50=current_ma50,
+                    confidence=confidence,
+                    reasoning=f"RSI {current_rsi:.1f} >= {self.rsi_buy_threshold}, Price above MA53"
+                )
+            
+            # Check for SELL signal (SHORT)
+            elif (current_rsi <= self.rsi_sell_threshold and 
+                  current_price < current_ma53):
+                
+                # Calculate confidence based on RSI strength and MA separation
+                rsi_strength = min((self.rsi_sell_threshold - current_rsi) / 10, 1.0)
+                ma_separation = abs(current_ma53 - current_price) / current_price
+                confidence = min(0.5 + (rsi_strength * 0.3) + (ma_separation * 0.2), 1.0)
+                
+                return TradingSignal(
+                    signal_type=SignalType.SELL,
+                    price=current_price,
+                    timestamp=datetime.now(),
+                    rsi=current_rsi,
+                    ma53=current_ma53,
+                    ma50=current_ma50,
+                    confidence=confidence,
+                    reasoning=f"RSI {current_rsi:.1f} <= {self.rsi_sell_threshold}, Price below MA53"
+                )
+            
+            # No signal - HOLD
+            return TradingSignal(
+                signal_type=SignalType.HOLD,
+                price=current_price,
+                timestamp=datetime.now(),
+                rsi=current_rsi,
+                ma53=current_ma53,
+                ma50=current_ma50,
+                confidence=0.0,
+                reasoning="No clear signal - holding position"
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating signal: {e}")
             return None
 
     def get_current_position_info(self) -> Dict:

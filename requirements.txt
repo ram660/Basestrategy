@@ -11,13 +11,12 @@ aiohttp>=3.8.0,<4.0.0
 cryptography>=3.4.8,<42.0.0
 pytz>=2021.3
 
-# For web dashboard
+# For web dashboard and cloud deployment
 flask>=2.3.0
 flask-cors>=4.0.0
 
-# Telegram Bot Integration
-python-telegram-bot>=20.0
-python-dotenv>=1.0.0
-
-# System monitoring
+# System monitoring (optimized for cloud)
 psutil>=5.9.0
+
+# Cloud deployment enhancements
+streamlit-autorefresh>=0.0.1

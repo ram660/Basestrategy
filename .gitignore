@@ -25,6 +25,29 @@ wheels/
 *.egg
 MANIFEST
 
+# Logs and data
+logs/
+trade_logs/
+*.log
+*.log.*
+
+# Development and testing files
+test_framework.py
+setup_verification.py
+keep_alive.py
+health_monitor.py
+
+# Docker files (not needed for Streamlit Cloud)
+Dockerfile
+docker-compose.yml
+
+# Duplicate files
+app.py
+cloud_trading_app.py
+cloud_trading_bot.py
+requirements_cloud.txt
+packages.txt
+
 # Virtual environments
 venv/
 env/
@@ -62,3 +85,12 @@ performance_data.json
 *.tmp
 *.temp
 .cache/
+
+# Cloud deployment
+.streamlit/
+deployment_logs/
+cloud_backup/
+
+# Runtime data
+signal_history.json
+bot_state.json
